@@ -252,16 +252,16 @@ table.dt td.num,table.dt th.num{text-align:right}
     </div>
     <div class="login-main">
       <h2>Sign in</h2>
-      <div class="fld"><label>User ID</label><input id="loginUser" autocomplete="username" placeholder="e.g. controller"></div>
+      <div class="fld"><label>User ID</label><input id="loginUser" autocomplete="username" placeholder="e.g. bunny"></div>
       <div class="fld"><label>Password</label><input id="loginPass" type="password" autocomplete="current-password" placeholder="Password"></div>
       <div style="margin-top:14px"><button class="btn btn-primary btn-block" onclick="doLogin()">Sign in</button></div>
       <div class="login-err" id="loginErr">Invalid User ID or password.</div>
       <div class="demo-accounts">
-        <h3>Demonstration Accounts</h3>
+        <h3>User Accounts</h3>
         <table>
-          <tr><td>Textbook Controller</td><td><code>controller</code></td><td><code>Controller@123</code></td><td class="use" onclick="fillLogin('controller','Controller@123')">Use</td></tr>
-          <tr><td>Manager</td><td><code>manager</code></td><td><code>Manager@123</code></td><td class="use" onclick="fillLogin('manager','Manager@123')">Use</td></tr>
-          <tr><td>Checker</td><td><code>checker</code></td><td><code>Checker@123</code></td><td class="use" onclick="fillLogin('checker','Checker@123')">Use</td></tr>
+          <tr><td>Bunny — Super Admin</td><td><code>bunny</code></td><td><code>wis@123</code></td><td class="use" onclick="fillLogin('bunny','wis@123')">Use</td></tr>
+          <tr><td>Phanna — Admin (verification)</td><td><code>phanna</code></td><td><code>wis@123</code></td><td class="use" onclick="fillLogin('phanna','wis@123')">Use</td></tr>
+          <tr><td>Saravutty — Admin User (controller)</td><td><code>saravutty</code></td><td><code>wis@123</code></td><td class="use" onclick="fillLogin('saravutty','wis@123')">Use</td></tr>
         </table>
       </div>
       <div class="login-warn" id="loginModeNote">⚠ These login accounts are for <b>local prototype testing only</b>. Data is stored inside this browser. Production use will require secure server-side authentication and a central database.</div>
@@ -344,9 +344,12 @@ const SCHOOL = "Western International School";
 
 // Fixed demonstration users (Version 1 only — see login warning)
 const USERS = [
-  {id:"controller", pass:"Controller@123", name:"Textbook Controller", role:"Controller", roleLabel:"Textbook Controller"},
-  {id:"manager",    pass:"Manager@123",    name:"Procurement & Project Manager", role:"Manager", roleLabel:"Procurement and Project Manager"},
-  {id:"checker",    pass:"Checker@123",    name:"Textbook Record Checker", role:"Checker", roleLabel:"Textbook Record Checker"}
+  {id:"bunny",     pass:"wis@123", name:"Bunny",     role:"Super Admin", roleLabel:"Super Admin — System Developer"},
+  {id:"phanna",    pass:"wis@123", name:"Phanna",    role:"Admin",      roleLabel:"Admin — Report Verification"},
+  {id:"saravutty", pass:"wis@123", name:"Saravutty", role:"Admin User", roleLabel:"Admin User — Textbook Controller"}
+  /* Planned: once the system runs smoothly, Saravutty will be downgraded to a
+     "Data Entry" role. To do that later, change role to "Data Entry" and adjust
+     W()/SYS() below — the permission model is centralised in those two helpers. */
 ];
 
 const CATEGORIES = ["Original Textbook","School-Made Textbook","Copy Textbook","MOEYS Textbook","Educational Material","Teaching Record Book","Teacher Reference Book","Other"];
@@ -459,9 +462,14 @@ function doLogout(){
   $("app").style.display="none"; $("loginScreen").style.display="flex";
   $("loginPass").value="";
 }
-const isController=()=>CUR&&CUR.role==="Controller";
-const isManager=()=>CUR&&CUR.role==="Manager";
-const isChecker=()=>CUR&&CUR.role==="Checker";
+const isSuper=()=>CUR&&CUR.role==="Super Admin";          // Bunny — full control incl. system actions
+const isAdminVerify=()=>CUR&&CUR.role==="Admin";          // Phanna — verifies reports; read, print, export
+const isAdminUser=()=>CUR&&CUR.role==="Admin User";       // Saravutty — day-to-day Textbook Controller
+const SYS=()=>isSuper();                                   // system-critical: restore, imports, reset, sync settings
+/* Compatibility aliases used across the app */
+const isController=()=>isSuper()||isAdminUser();          // "operator" dashboards + write UI
+const isManager=()=>isAdminVerify();                      // verification dashboard
+const isChecker=()=>false;                                 // no export-restricted role at present
 // Only the Controller can create/modify operational records in Version 1.
 const W=()=>isController();
 
@@ -2381,13 +2389,14 @@ function renderAudit(){
 /* ============================ 10. MODULE: BACKUP & RESTORE ================ */
 function renderBackup(){
   const MODSETS=[["campuses","Campuses"],["materials","Materials"],["openingStock","Opening Stock"],["receipts","Stock Receiving (GRN)"],["requests","Campus Requests"],["distributions","Campus Distributions"],["teachers","Teachers"],["loans","Teacher Loans"],["returns","Returns"],["trbIssues","Teaching Record Books"],["adjustments","Adjustments"],["movements","Stock Movements"],["audit","Audit Log"]];
-  const restUI =
-      '<div style="margin-top:12px"><label class="mini" style="font-weight:700;letter-spacing:.4px">SYNC URL — GOOGLE APPS SCRIPT WEB APP (ends in /exec)</label>'+
+  const restUI = SYS()
+    ? '<div style="margin-top:12px"><label class="mini" style="font-weight:700;letter-spacing:.4px">SYNC URL — GOOGLE APPS SCRIPT WEB APP (ends in /exec)</label>'+
       '<input type="text" id="syncUrlInp" placeholder="https://script.google.com/macros/s/…/exec" value="'+esc(SYNC_URL)+'" style="width:100%;margin:6px 0 10px">'+
       '<button class="btn" onclick="bkTestConn()">Test connection</button> '+
       '<button class="btn btn-primary" onclick="bkConnect()">🔗 Save &amp; connect</button> '+
       (SYNC_URL?'<button class="btn btn-danger" onclick="bkDisconnect()">Disconnect</button> ':'')+
-      '<div class="mini" style="margin-top:10px">How to get this URL: deploy the system on <b>script.google.com</b> (see the setup guide), set <b>Who has access: Anyone</b>, and copy the Web App URL ending in <span style="font-family:monospace">/exec</span>. Anyone who has this URL can read and write the data — keep it private. Attachments stay on the computer where they were uploaded; all records sync everywhere. Use the same URL on every computer.</div></div>';
+      '<div class="mini" style="margin-top:10px">How to get this URL: deploy the system on <b>script.google.com</b> (see the setup guide), set <b>Who has access: Anyone</b>, and copy the Web App URL ending in <span style="font-family:monospace">/exec</span>. Anyone who has this URL can read and write the data — keep it private. Attachments stay on the computer where they were uploaded; all records sync everywhere. Use the same URL on every computer.</div></div>'
+    : '<div class="mini" style="margin-top:10px">Only the Super Admin (Bunny) can connect, change, or disconnect the sync settings.</div>';
   const syncPanel = (typeof GAS!=="undefined" && GAS)
     ? '<div class="panel"><div class="panel-h"><h3>Real-Time Sync — Google Sheets</h3></div><div class="panel-b">'+
       '<div id="syncPanelStatus" class="form-warn" style="background:#eef6f0;border-color:#cfe8d8;color:#1b7f4d"></div>'+
@@ -2409,24 +2418,24 @@ function renderBackup(){
   '<div class="panel"><div class="panel-h"><h3>Excel Backup</h3></div><div class="panel-b">'+
   '<p class="mini" style="margin-top:0">Download all data as an Excel workbook with one worksheet per module (opens in Microsoft Excel and Google Sheets). The same file can be imported back below. Complex fields such as loan lines are stored as JSON text inside their cells so nothing is lost on round-trip.</p>'+
   '<button class="btn btn-primary" onclick="bkExcelExport()">⬇ Download backup (Excel)</button>'+
-  (W()?'<div style="margin-top:12px" class="form-warn">Importing an Excel backup replaces <b>all</b> current data with the workbook contents.</div>'+
+  (SYS()?'<div style="margin-top:12px" class="form-warn">Importing an Excel backup replaces <b>all</b> current data with the workbook contents.</div>'+
   '<input type="file" id="bkXlsFile" accept=".xls,.xml"> <button class="btn btn-danger" onclick="bkExcelImport()">↺ Import Excel backup</button>':'')+
   '</div></div>'+
   '<div class="panel"><div class="panel-h"><h3>Selected Module Backup</h3></div><div class="panel-b">'+
   '<p class="mini" style="margin-top:0">Export or import a single module (for example only Teacher Loans) without touching the rest of the system.</p>'+
   '<select id="bkModSel" style="max-width:280px">'+MODSETS.map(m=>'<option value="'+m[0]+'">'+m[1]+'</option>').join("")+'</select> '+
   '<button class="btn" onclick="bkModExport()">⬇ Export module</button>'+
-  (W()?' <input type="file" id="bkModFile" accept="application/json" style="max-width:240px"> <button class="btn btn-danger" onclick="bkModImport()">↺ Import module</button>':'')+
+  (SYS()?' <input type="file" id="bkModFile" accept="application/json" style="max-width:240px"> <button class="btn btn-danger" onclick="bkModImport()">↺ Import module</button>':'')+
   '</div></div>'+
   '<div class="panel"><div class="panel-h"><h3>Restore from backup</h3></div><div class="panel-b">'+
-  (W()?'<div class="form-warn">Restoring replaces <b>all</b> current data with the backup file contents. A confirmation is required. This action is recorded in the audit log.</div>'+
+  (SYS()?'<div class="form-warn">Restoring replaces <b>all</b> current data with the backup file contents. A confirmation is required. This action is recorded in the audit log.</div>'+
   '<input type="file" id="bkFile" accept="application/json"> <button class="btn btn-danger" onclick="bkRestore()">↺ Restore data</button>'
-  :'<div class="empty">Only the Textbook Controller can restore data.</div>')+'</div></div>'+
+  :'<div class="empty">Only the Super Admin (Bunny) can restore data.</div>')+'</div></div>'+
   '<div class="panel"><div class="panel-h"><h3>Backup History</h3></div><div class="panel-b" id="bkHist"></div></div>'+
   '<div class="panel"><div class="panel-h"><h3>Reset demonstration data</h3></div><div class="panel-b">'+
-  (W()?'<div class="form-warn">Resetting deletes all current records and reloads the original demonstration dataset. Use only for testing.</div>'+
+  (SYS()?'<div class="form-warn">Resetting deletes all current records and reloads the original demonstration dataset. Use only for testing.</div>'+
   '<button class="btn btn-danger" onclick="bkReset()">⟲ Reset Demo Data</button>'
-  :'<div class="empty">Only the Textbook Controller can reset demo data.</div>')+'</div></div>';
+  :'<div class="empty">Only the Super Admin (Bunny) can reset demo data.</div>')+'</div></div>';
   bkRenderHistory();
   updateSyncPanel();
 }
@@ -2446,7 +2455,7 @@ function bkTestConn(){
   },function(err){ toast("✗ Connection failed: "+esc(err.message||String(err)),"bad"); },u);
 }
 async function bkConnect(){
-  if(!W()) return toast("Only the Textbook Controller can change sync settings.","warn");
+  if(!SYS()) return toast("Only the Super Admin can change sync settings.","warn");
   const u=($("syncUrlInp").value||"").trim();
   if(!u) return toast("Paste the Web App URL first.","warn");
   if(!/^https:\/\/script\.google\.com\/.+\/exec/.test(u)) return toast("That does not look like an Apps Script Web App URL ending in /exec.","warn");
@@ -2466,7 +2475,7 @@ async function bkConnect(){
   },function(err){ toast("✗ Could not connect: "+esc(err.message||String(err)),"bad"); },u);
 }
 async function bkDisconnect(){
-  if(!W()) return toast("Only the Textbook Controller can change sync settings.","warn");
+  if(!SYS()) return toast("Only the Super Admin can change sync settings.","warn");
   const ok=await confirmBox("Disconnect real-time sync? Data will stay in this browser only. The shared copy in Google Sheets is not deleted.",false,"Disconnect sync");
   if(!ok) return;
   SYNC_URL=""; try{ localStorage.removeItem("wis_sync_url"); }catch(e){}
@@ -2520,7 +2529,7 @@ function bkExcelExport(){
   saveDB(); toast("Excel backup downloaded.","ok"); bkRenderHistory();
 }
 async function bkExcelImport(){
-  if(!W())return;
+  if(!SYS())return toast("Only the Super Admin can import an Excel backup.","warn");
   const f=$("bkXlsFile").files[0];
   if(!f)return toast("Choose an Excel backup file first.","warn");
   const ok=await confirmBox("Replace ALL current data with the contents of <b>"+esc(f.name)+"</b>? This cannot be undone.",true,"Confirm Excel import");
@@ -2566,7 +2575,7 @@ function bkModExport(){
   saveDB(); toast("Module exported.","ok"); bkRenderHistory();
 }
 async function bkModImport(){
-  if(!W())return;
+  if(!SYS())return toast("Only the Super Admin can import a module.","warn");
   const f=$("bkModFile").files[0];
   if(!f)return toast("Choose a module JSON file first.","warn");
   try{
@@ -2593,7 +2602,7 @@ function bkDownload(){
   saveDB(); toast("Backup file downloaded.","ok"); bkRenderHistory();
 }
 async function bkRestore(){
-  if(!W())return;
+  if(!SYS())return toast("Only the Super Admin can restore data.","warn");
   const f=$("bkFile").files[0];
   if(!f)return toast("Choose a backup JSON file first.","warn");
   const ok=await confirmBox("Replace ALL current data with the contents of <b>"+esc(f.name)+"</b>? This cannot be undone.",true,"Confirm restore");
@@ -2609,7 +2618,7 @@ async function bkRestore(){
   }catch(e){ console.error(e); toast("Restore failed — the file could not be read as JSON.","bad"); }
 }
 async function bkReset(){
-  if(!W())return;
+  if(!SYS())return toast("Only the Super Admin can reset demonstration data.","warn");
   const ok=await confirmBox("Delete ALL current records and reload the original demonstration data?",true,"Confirm reset");
   if(!ok)return;
   const user=CUR;
@@ -2654,9 +2663,9 @@ function renderHelp(){
   sec("1. Demonstration accounts",
   '<div class="form-warn">These accounts are for <b>local prototype testing only</b>. Production use requires secure server-side authentication.</div>'+
   '<div class="tbl-wrap"><table class="dt"><thead><tr><th>User ID</th><th>Password</th><th>Role</th><th>Can do</th></tr></thead><tbody>'+
-  '<tr><td><b>controller</b></td><td>Controller@123</td><td>Textbook Controller</td><td>The only data-entry user: materials, import, opening stock, receiving, requests, distributions, teachers, loans, returns, TRB issues, adjustments, reversals, backup/restore, reset demo data.</td></tr>'+
-  '<tr><td><b>manager</b></td><td>Manager@123</td><td>Procurement &amp; Project Manager</td><td>Read-only: full dashboard, all records, all reports, export, print, audit log. No editing.</td></tr>'+
-  '<tr><td><b>checker</b></td><td>Checker@123</td><td>Textbook Record Checker</td><td>Read-only: records, stock balances, lost &amp; damaged, print basic reports. No export of CSV, no editing.</td></tr>'+
+  '<tr><td><b>bunny</b></td><td>wis@123</td><td>Super Admin — System Developer</td><td>Full control of everything: all data entry and posting, plus system-critical actions reserved to this account — restore from backup, Excel/module imports, Reset Demo Data, and Real-Time Sync connect/disconnect.</td></tr>'+
+  '<tr><td><b>phanna</b></td><td>wis@123</td><td>Admin — Report Verification</td><td>Verifies that reports match the Textbook Controller\'s data entry. Read-only access to every module, all 21 reports, dashboards, audit log, printing and CSV export. No editing or posting.</td></tr>'+
+  '<tr><td><b>saravutty</b></td><td>wis@123</td><td>Admin User — Textbook Controller</td><td>Day-to-day operator: materials, import review, opening stock, receiving, requests, distributions, teachers, loans, returns, TRB issues, adjustments and reversals, backup downloads. System-critical actions (restore, reset, sync settings) require the Super Admin. Planned to be downgraded to Data Entry once the system runs smoothly.</td></tr>'+
   '</tbody></table></div>')+
   sec("2. The two core processes",
   '<p><b>A. Nursery–K3 (non-returnable campus distribution).</b> Record the campus request in <i>Campus Requests</i> → check stock → record one or more distributions in <i>Campus Distributions</i> (partial allowed) → the request moves Recorded → Pending Stock → Partially Distributed → Fully Distributed → Completed. These distributions never create teacher loans or return obligations.</p>'+
