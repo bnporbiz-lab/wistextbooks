@@ -64,6 +64,7 @@ h1,h2,h3{font-weight:600}
 .demo-accounts code{background:var(--gray-l);padding:1px 6px;border-radius:4px;font-size:.8rem}
 .demo-accounts .use{color:var(--blue);cursor:pointer;font-weight:600}
 .login-warn{margin-top:14px;background:var(--warn-l);border:1px solid #ecc98d;color:#7a4a00;font-size:.78rem;padding:9px 12px;border-radius:8px;line-height:1.45}
+.login-warn.connected{background:#eef6f0;border-color:#cfe8d8;color:#1b5e3d}
 .login-err{margin-top:10px;color:var(--bad);font-size:.85rem;display:none}
 
 /* ---------- App shell ---------- */
@@ -83,6 +84,15 @@ h1,h2,h3{font-weight:600}
 .topbar{background:#fff;border-bottom:1px solid var(--line);padding:10px 22px;display:flex;align-items:center;gap:14px;position:sticky;top:0;z-index:30}
 .topbar .ttl{font-weight:700;color:var(--navy);font-size:1.02rem;flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .topbar .ay-badge{background:var(--blue-l);color:var(--navy3);font-size:.76rem;font-weight:600;padding:4px 11px;border-radius:20px;white-space:nowrap}
+.sync-pill{display:inline-flex;align-items:center;gap:7px;font-size:.76rem;font-weight:600;padding:4px 12px;border-radius:20px;white-space:nowrap;background:#eef6f0;color:#1b7f4d;border:1px solid #cfe8d8}
+.sync-pill .dot{width:8px;height:8px;border-radius:50%;background:#1b7f4d;box-shadow:0 0 0 0 rgba(27,127,77,.5);animation:syncPulse 2s infinite}
+.sync-pill.state-loading,.sync-pill.state-saving{background:#eaf1fa;color:#0d3b66;border-color:#cddcf0}
+.sync-pill.state-loading .dot,.sync-pill.state-saving .dot{background:#0d3b66;box-shadow:none;animation:syncBlink 1s infinite}
+.sync-pill.state-err{background:#fdecec;color:#b3261e;border-color:#f3c9c6}
+.sync-pill.state-err .dot{background:#b3261e;box-shadow:none;animation:none}
+@keyframes syncPulse{0%{box-shadow:0 0 0 0 rgba(27,127,77,.45)}70%{box-shadow:0 0 0 6px rgba(27,127,77,0)}100%{box-shadow:0 0 0 0 rgba(27,127,77,0)}}
+@keyframes syncBlink{0%,100%{opacity:1}50%{opacity:.3}}
+@media (max-width:760px){.sync-pill #syncPillTxt{display:none}.sync-pill{padding:4px 8px}}
 .topbar .who{text-align:right;line-height:1.2}
 .topbar .who .nm{font-weight:600;font-size:.86rem}
 .topbar .who .rl{font-size:.7rem;color:var(--mut)}
@@ -254,7 +264,7 @@ table.dt td.num,table.dt th.num{text-align:right}
           <tr><td>Checker</td><td><code>checker</code></td><td><code>Checker@123</code></td><td class="use" onclick="fillLogin('checker','Checker@123')">Use</td></tr>
         </table>
       </div>
-      <div class="login-warn">⚠ These login accounts are for <b>local prototype testing only</b>. Data is stored inside this browser. Production use will require secure server-side authentication and a central database.</div>
+      <div class="login-warn" id="loginModeNote">⚠ These login accounts are for <b>local prototype testing only</b>. Data is stored inside this browser. Production use will require secure server-side authentication and a central database.</div>
     </div>
   </div>
 </div>
@@ -274,6 +284,7 @@ table.dt td.num,table.dt th.num{text-align:right}
       <header class="topbar">
         <button id="menuBtn" onclick="toggleSb()">☰</button>
         <div class="ttl" id="pageTitle">Dashboard</div>
+        <span class="sync-pill" id="syncPill" style="display:none"><span class="dot"></span><span id="syncPillTxt">Local only</span></span>
         <span class="ay-badge" id="topAY"></span>
         <div class="who"><div class="nm" id="whoName"></div><div class="rl" id="whoRole"></div></div>
         <button class="btn btn-ghost btn-sm" onclick="doLogout()">Log out</button>
@@ -373,7 +384,7 @@ function emptyDB(){
     adjustments:[], movements:[], audit:[]
   };
 }
-function saveDB(){ localStorage.setItem(LS_KEY, JSON.stringify(DB)); }
+function saveDB(){ localStorage.setItem(LS_KEY, JSON.stringify(DB)); gasQueueSave(); }
 function loadDB(){
   try{ const raw=localStorage.getItem(LS_KEY); if(raw){ DB=JSON.parse(raw); return; } }catch(e){ console.error("Load failed",e); }
   DB=emptyDB(); seedDemoData(); saveDB();
@@ -424,8 +435,9 @@ async function attOpen(key){
   const d=await idbOpen(); if(!d) return toast("Attachment store unavailable.","bad");
   const rec=await new Promise(res=>{ const rq=d.transaction("files").objectStore("files").get(key); rq.onsuccess=()=>res(rq.result); rq.onerror=()=>res(null); });
   if(!rec) return toast("Attachment not found in this browser.","warn");
-  const w=window.open("about:blank"); 
+  const w=window.open("about:blank");
   if(w){ w.document.write('<title>'+esc(rec.name)+'</title><iframe src="'+rec.data+'" style="border:0;position:fixed;inset:0;width:100%;height:100%"></iframe>'); }
+  else{ const a=document.createElement("a"); a.href=rec.data; a.download=rec.name; a.click(); }
 }
 function attLinkHTML(att){ return att&&att.key?'<a class="att-link" href="javascript:void(0)" onclick="attOpen(\''+att.key+'\')">📎 '+esc(att.name)+'</a>':'<span class="txt-mut">—</span>'; }
 
@@ -2368,18 +2380,208 @@ function renderAudit(){
 
 /* ============================ 10. MODULE: BACKUP & RESTORE ================ */
 function renderBackup(){
+  const MODSETS=[["campuses","Campuses"],["materials","Materials"],["openingStock","Opening Stock"],["receipts","Stock Receiving (GRN)"],["requests","Campus Requests"],["distributions","Campus Distributions"],["teachers","Teachers"],["loans","Teacher Loans"],["returns","Returns"],["trbIssues","Teaching Record Books"],["adjustments","Adjustments"],["movements","Stock Movements"],["audit","Audit Log"]];
+  const restUI =
+      '<div style="margin-top:12px"><label class="mini" style="font-weight:700;letter-spacing:.4px">SYNC URL — GOOGLE APPS SCRIPT WEB APP (ends in /exec)</label>'+
+      '<input type="text" id="syncUrlInp" placeholder="https://script.google.com/macros/s/…/exec" value="'+esc(SYNC_URL)+'" style="width:100%;margin:6px 0 10px">'+
+      '<button class="btn" onclick="bkTestConn()">Test connection</button> '+
+      '<button class="btn btn-primary" onclick="bkConnect()">🔗 Save &amp; connect</button> '+
+      (SYNC_URL?'<button class="btn btn-danger" onclick="bkDisconnect()">Disconnect</button> ':'')+
+      '<div class="mini" style="margin-top:10px">How to get this URL: deploy the system on <b>script.google.com</b> (see the setup guide), set <b>Who has access: Anyone</b>, and copy the Web App URL ending in <span style="font-family:monospace">/exec</span>. Anyone who has this URL can read and write the data — keep it private. Attachments stay on the computer where they were uploaded; all records sync everywhere. Use the same URL on every computer.</div></div>';
+  const syncPanel = (typeof GAS!=="undefined" && GAS)
+    ? '<div class="panel"><div class="panel-h"><h3>Real-Time Sync — Google Sheets</h3></div><div class="panel-b">'+
+      '<div id="syncPanelStatus" class="form-warn" style="background:#eef6f0;border-color:#cfe8d8;color:#1b7f4d"></div>'+
+      '<p class="mini">This deployment is connected to Google Sheets through your Apps Script Web App. Every save is pushed to the shared sheet, and this screen checks for updates from other computers every 7 seconds. Updates pause automatically while a form is open or while you have unsent changes, so live refreshes never interrupt data entry.</p>'+
+      '<button class="btn btn-primary" onclick="bkSyncNow()">⟳ Sync now</button> '+
+      '<span class="mini" id="syncPanelLast"></span>'+
+      '</div></div>'
+    : '<div class="panel"><div class="panel-h"><h3>Real-Time Sync — share live updates across computers</h3></div><div class="panel-b">'+
+      (SYNC_URL
+        ? '<div id="syncPanelStatus" class="form-warn" style="background:#eef6f0;border-color:#cfe8d8;color:#1b7f4d"></div>'+
+          '<p class="mini">Connected to your Google Apps Script Web App. Every save is pushed to the shared Google Sheet, and updates from other computers are checked every 7 seconds. <button class="btn btn-sm" onclick="bkSyncNow()">⟳ Sync now</button> <span class="mini" id="syncPanelLast"></span></p>'
+        : '<div class="empty" style="text-align:left">Not connected — data currently stays in this browser only. Paste your Apps Script Web App URL below to share live data between every computer that uses this page (for example when hosted on GitHub Pages).</div>')+
+      restUI+'</div></div>';
   $("content").innerHTML=
+  syncPanel+
   '<div class="panel"><div class="panel-h"><h3>JSON Backup</h3></div><div class="panel-b">'+
   '<p class="mini" style="margin-top:0">Download a complete JSON backup of every record — materials, stock, requests, distributions, teachers, loans, returns, Teaching Record Book issues, movements and the audit log. Attachments stored in the browser (IndexedDB) are not included in the JSON file.</p>'+
   '<button class="btn btn-primary" onclick="bkDownload()">⬇ Download backup (JSON)</button></div></div>'+
+  '<div class="panel"><div class="panel-h"><h3>Excel Backup</h3></div><div class="panel-b">'+
+  '<p class="mini" style="margin-top:0">Download all data as an Excel workbook with one worksheet per module (opens in Microsoft Excel and Google Sheets). The same file can be imported back below. Complex fields such as loan lines are stored as JSON text inside their cells so nothing is lost on round-trip.</p>'+
+  '<button class="btn btn-primary" onclick="bkExcelExport()">⬇ Download backup (Excel)</button>'+
+  (W()?'<div style="margin-top:12px" class="form-warn">Importing an Excel backup replaces <b>all</b> current data with the workbook contents.</div>'+
+  '<input type="file" id="bkXlsFile" accept=".xls,.xml"> <button class="btn btn-danger" onclick="bkExcelImport()">↺ Import Excel backup</button>':'')+
+  '</div></div>'+
+  '<div class="panel"><div class="panel-h"><h3>Selected Module Backup</h3></div><div class="panel-b">'+
+  '<p class="mini" style="margin-top:0">Export or import a single module (for example only Teacher Loans) without touching the rest of the system.</p>'+
+  '<select id="bkModSel" style="max-width:280px">'+MODSETS.map(m=>'<option value="'+m[0]+'">'+m[1]+'</option>').join("")+'</select> '+
+  '<button class="btn" onclick="bkModExport()">⬇ Export module</button>'+
+  (W()?' <input type="file" id="bkModFile" accept="application/json" style="max-width:240px"> <button class="btn btn-danger" onclick="bkModImport()">↺ Import module</button>':'')+
+  '</div></div>'+
   '<div class="panel"><div class="panel-h"><h3>Restore from backup</h3></div><div class="panel-b">'+
   (W()?'<div class="form-warn">Restoring replaces <b>all</b> current data with the backup file contents. A confirmation is required. This action is recorded in the audit log.</div>'+
   '<input type="file" id="bkFile" accept="application/json"> <button class="btn btn-danger" onclick="bkRestore()">↺ Restore data</button>'
   :'<div class="empty">Only the Textbook Controller can restore data.</div>')+'</div></div>'+
+  '<div class="panel"><div class="panel-h"><h3>Backup History</h3></div><div class="panel-b" id="bkHist"></div></div>'+
   '<div class="panel"><div class="panel-h"><h3>Reset demonstration data</h3></div><div class="panel-b">'+
   (W()?'<div class="form-warn">Resetting deletes all current records and reloads the original demonstration dataset. Use only for testing.</div>'+
   '<button class="btn btn-danger" onclick="bkReset()">⟲ Reset Demo Data</button>'
   :'<div class="empty">Only the Textbook Controller can reset demo data.</div>')+'</div></div>';
+  bkRenderHistory();
+  updateSyncPanel();
+}
+function updateSyncPanel(){
+  const st=document.getElementById("syncPanelStatus"), last=document.getElementById("syncPanelLast");
+  if(!st || !CLOUD()) return;
+  st.innerHTML='<b>Status: Connected via '+(GAS?'Google Sheets (Apps Script)':'your Google Apps Script Web App')+'</b> — every computer using this URL receives live updates (pushed on every save, checked every 7 seconds).';
+  if(last) last.textContent = GAS_LASTSYNC ? ("Last synchronised: "+GAS_LASTSYNC.toLocaleTimeString()) : "Waiting for first synchronisation…";
+}
+function bkTestConn(){
+  const u=($("syncUrlInp").value||"").trim();
+  if(!u) return toast("Paste the Web App URL first.","warn");
+  if(!/^https:\/\/script\.google\.com\/.+\/exec/.test(u)) return toast("That does not look like an Apps Script Web App URL ending in /exec.","warn");
+  toast("Testing connection…","ok");
+  cloudLoad(function(raw){
+    toast(raw ? "✓ Connected — shared database found ("+raw.length.toLocaleString()+" characters)." : "✓ Connected — the shared store is empty (this computer's data will be published when you connect).","ok");
+  },function(err){ toast("✗ Connection failed: "+esc(err.message||String(err)),"bad"); },u);
+}
+async function bkConnect(){
+  if(!W()) return toast("Only the Textbook Controller can change sync settings.","warn");
+  const u=($("syncUrlInp").value||"").trim();
+  if(!u) return toast("Paste the Web App URL first.","warn");
+  if(!/^https:\/\/script\.google\.com\/.+\/exec/.test(u)) return toast("That does not look like an Apps Script Web App URL ending in /exec.","warn");
+  toast("Connecting…","ok");
+  cloudLoad(async function(raw){
+    if(raw){
+      const ok=await confirmBox("Connected. The shared store already contains data. Load the <b>shared copy</b> into this browser (recommended)? Choosing Cancel keeps this browser\'s data and overwrites the shared copy on the next save.",false,"Choose data source");
+      SYNC_URL=u; try{ localStorage.setItem("wis_sync_url",u); }catch(e){}
+      if(ok){ try{ DB=JSON.parse(raw); GAS_LASTRAW=raw; localStorage.setItem(LS_KEY,raw); }catch(e){ return toast("Shared data could not be read.","bad"); } }
+      else { gasQueueSave(); }
+    }else{
+      SYNC_URL=u; try{ localStorage.setItem("wis_sync_url",u); }catch(e){}
+      gasQueueSave();
+    }
+    audit("Post","Backup & Restore","SYNC","","","Real-time sync connected to Apps Script Web App");
+    saveDB(); gasStartPoll(); toast("✓ Real-time sync connected.","ok"); refresh();
+  },function(err){ toast("✗ Could not connect: "+esc(err.message||String(err)),"bad"); },u);
+}
+async function bkDisconnect(){
+  if(!W()) return toast("Only the Textbook Controller can change sync settings.","warn");
+  const ok=await confirmBox("Disconnect real-time sync? Data will stay in this browser only. The shared copy in Google Sheets is not deleted.",false,"Disconnect sync");
+  if(!ok) return;
+  SYNC_URL=""; try{ localStorage.removeItem("wis_sync_url"); }catch(e){}
+  if(GAS_POLL){ clearInterval(GAS_POLL); GAS_POLL=null; }
+  const pill=document.getElementById("syncPill"); if(pill) pill.style.display="none";
+  audit("Post","Backup & Restore","SYNC","","","Real-time sync disconnected");
+  localStorage.setItem(LS_KEY, JSON.stringify(DB));
+  toast("Sync disconnected.","ok"); refresh();
+}
+function bkSyncNow(){
+  if(!CLOUD()) return toast("Not connected to Google Sheets.","warn");
+  toast("Synchronising…","ok");
+  if(GAS_DIRTY||GAS_BUSY){ gasPush(); return; }
+  gasPull(function(changed){ toast(changed?"Updates received from Google Sheets.":"Already up to date.","ok"); });
+}
+function bkRenderHistory(){
+  const el=document.getElementById("bkHist"); if(!el) return;
+  const rows=DB.audit.filter(a=>a.module==="Backup & Restore").slice(-25).reverse();
+  el.innerHTML = rows.length
+    ? miniTable(["Date / time","User","Action","Details"], rows.map(a=>[esc(a.ts||""),esc(a.user||""),esc(a.action||""),esc((a.ref?a.ref+" — ":"")+(a.note||""))]))
+    : '<div class="empty">No backup or restore activity recorded yet.</div>';
+}
+/* ---------------- Excel (SpreadsheetML) export / import ---------------- */
+function bkXmlEsc(s){ return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"); }
+function bkExcelExport(){
+  const sheets={Meta:[DB.meta], Counters:[DB.counters], Campuses:DB.campuses, Materials:DB.materials, OpeningStock:DB.openingStock,
+    Receipts:DB.receipts, Requests:DB.requests, Distributions:DB.distributions, Teachers:DB.teachers, Loans:DB.loans,
+    Returns:DB.returns, TRBIssues:DB.trbIssues, Adjustments:DB.adjustments, Movements:DB.movements, Audit:DB.audit};
+  let xml='<?xml version="1.0"?><?mso-application progid="Excel.Sheet"?>'+
+    '<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet" xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">';
+  for(const [name,arr] of Object.entries(sheets)){
+    const cols=[...new Set(arr.flatMap(o=>Object.keys(o||{})))];
+    xml+='<Worksheet ss:Name="'+bkXmlEsc(name)+'"><Table>';
+    xml+='<Row>'+cols.map(c=>'<Cell><Data ss:Type="String">'+bkXmlEsc(c)+'</Data></Cell>').join("")+'</Row>';
+    for(const o of arr){
+      xml+='<Row>'+cols.map(c=>{
+        let v=o?o[c]:undefined;
+        if(v===undefined||v===null) v="";
+        else if(typeof v==="object") v="\u2401JSON\u2401"+JSON.stringify(v);
+        const isNum = typeof v==="number" && isFinite(v);
+        return '<Cell><Data ss:Type="'+(isNum?"Number":"String")+'">'+bkXmlEsc(v)+'</Data></Cell>';
+      }).join("")+'</Row>';
+    }
+    xml+='</Table></Worksheet>';
+  }
+  xml+='</Workbook>';
+  const blob=new Blob([xml],{type:"application/vnd.ms-excel"});
+  const a=document.createElement("a"); a.href=URL.createObjectURL(blob);
+  a.download="WIS_Textbook_Control_Backup_"+todayStr()+".xls"; a.click();
+  audit("Backup","Backup & Restore",a.download,"","","Excel workbook backup downloaded");
+  saveDB(); toast("Excel backup downloaded.","ok"); bkRenderHistory();
+}
+async function bkExcelImport(){
+  if(!W())return;
+  const f=$("bkXlsFile").files[0];
+  if(!f)return toast("Choose an Excel backup file first.","warn");
+  const ok=await confirmBox("Replace ALL current data with the contents of <b>"+esc(f.name)+"</b>? This cannot be undone.",true,"Confirm Excel import");
+  if(!ok)return;
+  try{
+    const txt=await f.text();
+    const doc=new DOMParser().parseFromString(txt,"text/xml");
+    if(doc.querySelector("parsererror")) return toast("This file is not a Textbook Control System Excel backup (must be the .xls file exported above).","bad");
+    const NS="urn:schemas-microsoft-com:office:spreadsheet";
+    const sheets={};
+    doc.querySelectorAll("Worksheet").forEach(ws=>{
+      const name=ws.getAttributeNS(NS,"Name")||ws.getAttribute("ss:Name");
+      const rows=[...ws.querySelectorAll("Row")].map(r=>[...r.querySelectorAll("Data")].map(d=>{
+        const t=d.getAttributeNS(NS,"Type")||d.getAttribute("ss:Type"); const raw=d.textContent;
+        if(t==="Number") return Number(raw);
+        if(raw.startsWith("\u2401JSON\u2401")){ try{ return JSON.parse(raw.slice(6)); }catch(e){ return raw; } }
+        return raw;
+      }));
+      if(!rows.length){ sheets[name]=[]; return; }
+      const cols=rows[0].map(String);
+      sheets[name]=rows.slice(1).map(r=>{ const o={}; cols.forEach((c,i)=>{ if(r[i]!==""&&r[i]!==undefined) o[c]=r[i]; }); return o; });
+    });
+    const need=["Meta","Counters","Materials","Movements"];
+    for(const n of need) if(!sheets[n]) return toast("Worksheet \""+n+"\" is missing — not a valid backup workbook.","bad");
+    DB={ meta:sheets.Meta[0]||emptyDB().meta, counters:sheets.Counters[0]||emptyDB().counters,
+      campuses:sheets.Campuses||[], materials:sheets.Materials||[], openingStock:sheets.OpeningStock||[],
+      receipts:sheets.Receipts||[], requests:sheets.Requests||[], distributions:sheets.Distributions||[],
+      teachers:sheets.Teachers||[], loans:sheets.Loans||[], returns:sheets.Returns||[], trbIssues:sheets.TRBIssues||[],
+      adjustments:sheets.Adjustments||[], movements:sheets.Movements||[], audit:sheets.Audit||[] };
+    DB.campuses=DB.campuses.filter(c=>!String(c.code||"").toUpperCase().startsWith("WU"));
+    audit("Restore","Backup & Restore",f.name,"","","Excel workbook backup imported (full replace)");
+    saveDB(); toast("Excel backup imported successfully.","ok"); refresh();
+  }catch(e){ console.error(e); toast("Import failed — the file could not be read.","bad"); }
+}
+/* ---------------- Selected module export / import ---------------- */
+function bkModExport(){
+  const mod=$("bkModSel").value;
+  const payload={system:"WIS-TBC",module:mod,exportedAt:nowTs(),data:DB[mod]||[]};
+  const blob=new Blob([JSON.stringify(payload,null,1)],{type:"application/json"});
+  const a=document.createElement("a"); a.href=URL.createObjectURL(blob);
+  a.download="WIS_TBC_Module_"+mod+"_"+todayStr()+".json"; a.click();
+  audit("Backup","Backup & Restore",a.download,"","","Module export: "+mod+" ("+(DB[mod]||[]).length+" records)");
+  saveDB(); toast("Module exported.","ok"); bkRenderHistory();
+}
+async function bkModImport(){
+  if(!W())return;
+  const f=$("bkModFile").files[0];
+  if(!f)return toast("Choose a module JSON file first.","warn");
+  try{
+    const payload=JSON.parse(await f.text());
+    if(payload.system!=="WIS-TBC"||!payload.module||!Array.isArray(payload.data))
+      return toast("This file is not a Textbook Control System module export.","bad");
+    if(!(payload.module in DB)||!Array.isArray(DB[payload.module]))
+      return toast("Unknown module in file: "+esc(payload.module),"bad");
+    const ok=await confirmBox("Replace the <b>"+esc(payload.module)+"</b> module ("+DB[payload.module].length+" current records) with "+payload.data.length+" records from <b>"+esc(f.name)+"</b>? Other modules are not affected. Stock figures are recalculated from the ledger, so importing transactional modules on their own can cause mismatches — prefer full backups for that.",true,"Confirm module import");
+    if(!ok)return;
+    DB[payload.module]=payload.data;
+    if(payload.module==="campuses") DB.campuses=DB.campuses.filter(c=>!String(c.code||"").toUpperCase().startsWith("WU"));
+    audit("Restore","Backup & Restore",f.name,"","","Module import: "+payload.module+" ("+payload.data.length+" records)");
+    saveDB(); toast("Module imported.","ok"); refresh();
+  }catch(e){ console.error(e); toast("Import failed — the file could not be read as JSON.","bad"); }
 }
 function bkDownload(){
   const blob=new Blob([JSON.stringify(DB,null,1)],{type:"application/json"});
@@ -2388,7 +2590,7 @@ function bkDownload(){
   a.download="WIS_Textbook_Control_Backup_"+todayStr()+".json";
   a.click();
   audit("Backup","Backup & Restore",a.download,"","","JSON backup downloaded");
-  saveDB(); toast("Backup file downloaded.","ok");
+  saveDB(); toast("Backup file downloaded.","ok"); bkRenderHistory();
 }
 async function bkRestore(){
   if(!W())return;
@@ -2401,6 +2603,7 @@ async function bkRestore(){
     if(!data.meta||!data.counters||!Array.isArray(data.materials)||!Array.isArray(data.movements))
       return toast("This file is not a valid Textbook Control System backup.","bad");
     DB=data;
+    DB.campuses=DB.campuses.filter(c=>!String(c.code||"").toUpperCase().startsWith("WU"));
     audit("Restore","Backup & Restore",f.name,"","",typeof ok==="string"?ok:"Backup restored");
     saveDB(); toast("Backup restored successfully.","ok"); refresh();
   }catch(e){ console.error(e); toast("Restore failed — the file could not be read as JSON.","bad"); }
@@ -2678,20 +2881,150 @@ function seedDemoData(){
   seedAudit(nowTs(),"Import","System","DEMO","Demonstration dataset loaded","Realistic records posted through the live stock engine");
 }
 
-/* ============================ 14. BOOTSTRAP =============================== */
-loadDB();
-// Safety net: Western University campuses can never appear, even in restored data
-DB.campuses=DB.campuses.filter(c=>!String(c.code||"").toUpperCase().startsWith("WU"));
+/* =============== 14. GOOGLE APPS SCRIPT SYNC + BOOTSTRAP ================== */
+/* When this file is served from script.google.com the app keeps the fast
+   localStorage cache but also loads/saves the shared database in Google
+   Sheets through google.script.run. Opened as a plain local file, it
+   behaves exactly as before (offline, browser-only storage). */
+const GAS = (typeof google!=="undefined" && google.script && google.script.run);
+let SYNC_URL = "";
+try{ SYNC_URL = localStorage.getItem("wis_sync_url")||""; }catch(e){}
+function CLOUD(){ return !!(GAS || SYNC_URL); }
+let GAS_TIMER=null, GAS_BUSY=false, GAS_DIRTY=false;
+
+/* Transport: inside script.google.com use google.script.run; hosted anywhere
+   else (GitHub Pages, local file) use fetch() against the Apps Script /exec
+   URL saved in Backup & Restore. POST uses text/plain to avoid CORS preflight. */
+function cloudLoad(succ,fail,urlOverride){
+  const u=urlOverride||SYNC_URL;
+  if(GAS && !urlOverride){ google.script.run.withSuccessHandler(succ).withFailureHandler(fail).apiLoad(); return; }
+  if(!u){ fail(new Error("Not connected")); return; }
+  fetch(u+(u.includes("?")?"&":"?")+"api=load",{method:"GET",redirect:"follow"})
+    .then(r=>{ if(!r.ok) throw new Error("HTTP "+r.status); return r.text(); })
+    .then(t=>{ if(/^\s*</.test(t)) throw new Error("The URL returned a web page, not data — check it is the /exec URL and access is set to Anyone"); succ(t); })
+    .catch(fail);
+}
+function cloudSave(json,succ,fail){
+  if(GAS){ google.script.run.withSuccessHandler(succ).withFailureHandler(fail).apiSave(json); return; }
+  if(!SYNC_URL){ fail(new Error("Not connected")); return; }
+  fetch(SYNC_URL,{method:"POST",redirect:"follow",headers:{"Content-Type":"text/plain;charset=utf-8"},body:json})
+    .then(r=>r.text())
+    .then(t=>{ let o=null; try{ o=JSON.parse(t); }catch(e){}
+      if(o && o.ok) succ(o); else fail(new Error((o&&o.error)||"Save rejected — check access is set to Anyone")); })
+    .catch(fail);
+}
+
+function syncBadge(state,msg){
+  if(!CLOUD()) return;
+  // Persistent header pill (like "Live · Google Drive sync")
+  const pill=document.getElementById("syncPill"), txt=document.getElementById("syncPillTxt");
+  if(pill){
+    pill.style.display="inline-flex";
+    pill.className="sync-pill"+(state==="loading"?" state-loading":state==="saving"?" state-saving":state==="err"?" state-err":"");
+    if(txt) txt.textContent = state==="loading" ? "Connecting…"
+                        : state==="saving"  ? "Saving…"
+                        : state==="err"     ? "Offline — saved in this browser"
+                        : "Live · Google Sheets sync";
+    pill.title = msg || txt.textContent;
+  }
+  // Floating toast only for problems, so errors are never missed
+  let el=document.getElementById("gasSync");
+  if(state==="err"){
+    if(!el){ el=document.createElement("div"); el.id="gasSync";
+      el.style.cssText="position:fixed;right:14px;bottom:14px;z-index:4000;font:600 12px/1.4 'Segoe UI',sans-serif;padding:7px 14px;border-radius:20px;box-shadow:0 3px 10px rgba(0,0,0,.25);pointer-events:none;transition:opacity .4s;background:#b3261e;color:#fff";
+      document.body.appendChild(el); }
+    el.textContent=msg; el.style.opacity="1";
+    clearTimeout(el._t); el._t=setTimeout(()=>{ el.style.opacity="0"; },6000);
+  }else if(el){ el.style.opacity="0"; }
+}
+function gasQueueSave(){
+  if(!CLOUD()) return;
+  GAS_DIRTY=true;
+  clearTimeout(GAS_TIMER);
+  GAS_TIMER=setTimeout(gasPush,1200);
+}
+function gasPush(){
+  if(!CLOUD()||GAS_BUSY) return;
+  GAS_BUSY=true; GAS_DIRTY=false;
+  syncBadge("saving","Saving to Google Sheets…");
+  const _sent=JSON.stringify(DB);
+  cloudSave(_sent,
+    function(){ GAS_BUSY=false; GAS_LASTRAW=_sent; GAS_LASTSYNC=new Date(); syncBadge("ok","✓ Saved to Google Sheets"); if(typeof updateSyncPanel==="function") updateSyncPanel(); if(GAS_DIRTY) gasPush(); },
+    function(err){ GAS_BUSY=false; syncBadge("err","⚠ Cloud save failed — data kept in this browser"); console.error("apiSave failed",err); });
+}
+/* ---- Live pull: other computers receive updates automatically ---- */
+let GAS_POLL=null, GAS_LASTRAW=null, GAS_LASTSYNC=null;
+function gasStartPoll(){ if(!CLOUD() || GAS_POLL) return; GAS_POLL=setInterval(function(){ gasPull(); }, 7000); }
+function gasPull(done){
+  if(!CLOUD()){ if(done)done(false); return; }
+  // Never adopt remote data while this browser has unsent changes or a form open
+  if(GAS_BUSY || GAS_DIRTY || document.getElementById("modalOverlay").classList.contains("show")){ if(done)done(false); return; }
+  cloudLoad(function(raw){
+      GAS_LASTSYNC=new Date();
+      let changed=false;
+      if(raw && raw!==GAS_LASTRAW && raw!==JSON.stringify(DB)){
+        try{
+          const incoming=JSON.parse(raw);
+          DB=incoming; GAS_LASTRAW=raw;
+          localStorage.setItem(LS_KEY,raw);
+          changed=true;
+          if(CUR) refresh();
+        }catch(e){ console.error("Live pull: cloud data unreadable",e); }
+      }else{ GAS_LASTRAW=raw||GAS_LASTRAW; }
+      syncBadge("ok");
+      if(typeof updateSyncPanel==="function") updateSyncPanel();
+      if(done)done(changed);
+    },
+    function(err){ console.error("Live pull failed",err); syncBadge("err","⚠ Live sync interrupted — will keep retrying"); if(done)done(false); });
+}
+window.addEventListener("beforeunload",function(e){
+  if(CLOUD() && (GAS_DIRTY||GAS_BUSY)){ e.preventDefault(); e.returnValue=""; }
+});
+
+function finishBoot(){
+  // Login banner reflects the real storage mode
+  (function(){
+    const n=document.getElementById("loginModeNote"); if(!n) return;
+    if(CLOUD()){
+      n.classList.add("connected");
+      n.innerHTML='✓ Connected to the <b>central Google Sheets database</b> — every computer using this address shares the same live data. These demonstration accounts are prototype-level sign-in; production use will still require secure server-side authentication.';
+    }
+  })();
+  // Safety net: Western University campuses can never appear, even in restored data
+  DB.campuses=DB.campuses.filter(c=>!String(c.code||"").toUpperCase().startsWith("WU"));
   // Official campus names — corrects any older records automatically
   const OFFICIAL_CAMPUS_NAMES={BKK:"Boeung Kak Campus",STD:"Stadium Campus",TSK:"Toul Sangke Campus",SSK:"Sen Sok Campus",BCH:"Boeung Chhouk Campus",DNG:"Doung Ngeab Campus",SOW:"South West Campus",CKD1:"Chamkardong 1 Campus",CKD2:"Chamkardong 2 Campus",BTB1:"Boeung Trabek 1 Campus",BTB2:"Boeung Trabek 2 Campus",BTB3:"Boeung Trabek 3 Campus",BTB4:"Boeung Trabek 4 Campus",CAR:"Chak Angre Campus",VSB:"Veal Sbov Campus",SHV:"Sihanoukville Campus",CEN:"Central Office"};
   let _cnFixed=false;
   DB.campuses.forEach(c=>{ const n=OFFICIAL_CAMPUS_NAMES[String(c.code||"").toUpperCase()]; if(n && c.name!==n){ c.name=n; _cnFixed=true; } });
   if(_cnFixed) saveDB();
-(function(){
   const s=sessionStorage.getItem("wis_session");
   if(s){ const u=USERS.find(x=>x.id===s); if(u){ CUR=u; showApp(); } }
   ["loginUser","loginPass"].forEach(id=>$(id).addEventListener("keydown",e=>{ if(e.key==="Enter") doLogin(); }));
-})();
+}
+
+if(CLOUD()){
+  syncBadge("loading","Loading shared data from Google Sheets…");
+  cloudLoad(function(raw){
+      if(raw){
+        try{ DB=JSON.parse(raw); GAS_LASTRAW=raw; GAS_LASTSYNC=new Date(); localStorage.setItem(LS_KEY,raw); syncBadge("ok","✓ Connected to Google Sheets"); }
+        catch(e){ console.error("Cloud data unreadable, using local copy",e); loadDB(); syncBadge("err","⚠ Cloud data unreadable — using local copy"); }
+      }else{
+        // First run on this deployment: seed locally, then publish to the sheet
+        loadDB(); gasQueueSave(); syncBadge("ok","✓ Connected — first-time data published");
+      }
+      gasStartPoll();
+      finishBoot();
+    },
+    function(err){
+      console.error("apiLoad failed",err);
+      gasStartPoll();
+      loadDB(); syncBadge("err","⚠ Could not reach Google Sheets — working locally");
+      finishBoot();
+    });
+}else{
+  loadDB();
+  finishBoot();
+}
 </script>
 </body>
 </html>
